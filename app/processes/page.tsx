@@ -20,10 +20,13 @@ import {
 
 interface PlatformSettings {
   dailyEnabled: boolean;
-  weeklyEnabled: boolean;
   dailyPostCount: number;
-  timeRangeStart: string;
-  timeRangeEnd: string;
+  dailyTimeRangeStart: string;
+  dailyTimeRangeEnd: string;
+  weeklyEnabled: boolean;
+  weeklyPostCount: number;
+  weeklyTimeRangeStart: string;
+  weeklyTimeRangeEnd: string;
 }
 
 interface ProcessConfig {
@@ -49,17 +52,23 @@ export default function ProcessesPage() {
     platformSettings: {
       telegram: {
         dailyEnabled: false,
-        weeklyEnabled: false,
         dailyPostCount: 5,
-        timeRangeStart: "09:00",
-        timeRangeEnd: "16:00",
+        dailyTimeRangeStart: "09:00",
+        dailyTimeRangeEnd: "16:00",
+        weeklyEnabled: false,
+        weeklyPostCount: 10,
+        weeklyTimeRangeStart: "09:00",
+        weeklyTimeRangeEnd: "18:00",
       },
       twitter: {
         dailyEnabled: false,
-        weeklyEnabled: false,
         dailyPostCount: 5,
-        timeRangeStart: "09:00",
-        timeRangeEnd: "16:00",
+        dailyTimeRangeStart: "09:00",
+        dailyTimeRangeEnd: "16:00",
+        weeklyEnabled: false,
+        weeklyPostCount: 10,
+        weeklyTimeRangeStart: "09:00",
+        weeklyTimeRangeEnd: "18:00",
       },
     },
   });
@@ -74,14 +83,78 @@ export default function ProcessesPage() {
       const data = await response.json();
 
       if (data) {
-        const platformSettings =
+        let platformSettings =
           typeof data.platformSettings === "string"
             ? JSON.parse(data.platformSettings)
             : data.platformSettings;
 
+        // Migrate old format to new format if needed
+        if (platformSettings) {
+          const migrateSettings = (settings: any) => {
+            if (!settings) return null;
+            
+            // Check if old format (has timeRangeStart/timeRangeEnd instead of dailyTimeRangeStart)
+            if (settings.timeRangeStart && !settings.dailyTimeRangeStart) {
+              return {
+                dailyEnabled: settings.dailyEnabled || false,
+                dailyPostCount: settings.dailyPostCount || 5,
+                dailyTimeRangeStart: settings.timeRangeStart || "09:00",
+                dailyTimeRangeEnd: settings.timeRangeEnd || "16:00",
+                weeklyEnabled: settings.weeklyEnabled || false,
+                weeklyPostCount: settings.weeklyPostCount || 10,
+                weeklyTimeRangeStart: settings.weeklyTimeRangeStart || "09:00",
+                weeklyTimeRangeEnd: settings.weeklyTimeRangeEnd || "18:00",
+              };
+            }
+            
+            // Ensure all new fields exist
+            return {
+              dailyEnabled: settings.dailyEnabled ?? false,
+              dailyPostCount: settings.dailyPostCount ?? 5,
+              dailyTimeRangeStart: settings.dailyTimeRangeStart || "09:00",
+              dailyTimeRangeEnd: settings.dailyTimeRangeEnd || "16:00",
+              weeklyEnabled: settings.weeklyEnabled ?? false,
+              weeklyPostCount: settings.weeklyPostCount ?? 10,
+              weeklyTimeRangeStart: settings.weeklyTimeRangeStart || "09:00",
+              weeklyTimeRangeEnd: settings.weeklyTimeRangeEnd || "18:00",
+            };
+          };
+
+          platformSettings = {
+            telegram: migrateSettings(platformSettings.telegram),
+            twitter: migrateSettings(platformSettings.twitter),
+          };
+        }
+
         setConfig({
-          ...data,
-          platformSettings,
+          highPriorityKeywords: data.highPriorityKeywords || "bitcoin\nethereum\nfed\ninterest rates\nsec\netf",
+          volatilityThreshold: data.volatilityThreshold ?? 2.0,
+          language: data.language || "en",
+          newsTimeWindow: data.newsTimeWindow ?? 2,
+          duplicateThreshold: data.duplicateThreshold ?? 80.0,
+          cacheDuration: data.cacheDuration ?? 300,
+          platformSettings: platformSettings || {
+            telegram: {
+              dailyEnabled: false,
+              dailyPostCount: 5,
+              dailyTimeRangeStart: "09:00",
+              dailyTimeRangeEnd: "16:00",
+              weeklyEnabled: false,
+              weeklyPostCount: 10,
+              weeklyTimeRangeStart: "09:00",
+              weeklyTimeRangeEnd: "18:00",
+            },
+            twitter: {
+              dailyEnabled: false,
+              dailyPostCount: 5,
+              dailyTimeRangeStart: "09:00",
+              dailyTimeRangeEnd: "16:00",
+              weeklyEnabled: false,
+              weeklyPostCount: 10,
+              weeklyTimeRangeStart: "09:00",
+              weeklyTimeRangeEnd: "18:00",
+            },
+          },
         });
       }
     } catch (error) {
@@ -92,29 +165,67 @@ export default function ProcessesPage() {
   const handleSave = async () => {
     setLoading(true);
     try {
+      // Prepare data - only send necessary fields, exclude id
+      const { id, ...configToSave } = config;
+      
+      // Ensure platformSettings is properly formatted
+      let platformSettingsString: string;
+      if (typeof config.platformSettings === "string") {
+        // Validate it's valid JSON
+        try {
+          JSON.parse(config.platformSettings);
+          platformSettingsString = config.platformSettings;
+        } catch {
+          // If invalid, stringify the default
+          platformSettingsString = JSON.stringify(config.platformSettings);
+        }
+      } else {
+        platformSettingsString = JSON.stringify(config.platformSettings);
+      }
+
+      const payload = {
+        highPriorityKeywords: config.highPriorityKeywords || "",
+        volatilityThreshold: config.volatilityThreshold ?? 2.0,
+        language: config.language || "en",
+        newsTimeWindow: config.newsTimeWindow ?? 2,
+        duplicateThreshold: config.duplicateThreshold ?? 80.0,
+        cacheDuration: config.cacheDuration ?? 300,
+        platformSettings: platformSettingsString,
+      };
+
+      console.log("Saving config with payload:", JSON.stringify(payload, null, 2));
+
       const response = await fetch("/api/process-config", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          ...config,
-          platformSettings: typeof config.platformSettings === "string"
-            ? config.platformSettings
-            : JSON.stringify(config.platformSettings),
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await response.json();
+      console.log("Save response:", response.status, data);
 
       if (response.ok) {
+        // Update local state with saved data
+        const savedPlatformSettings = typeof data.platformSettings === "string"
+          ? JSON.parse(data.platformSettings)
+          : data.platformSettings;
+
+        setConfig({
+          ...data,
+          platformSettings: savedPlatformSettings,
+        });
+        
         alert("Configuration saved successfully!");
       } else {
-        console.error("Save failed:", data);
-        alert(`Failed to save configuration: ${data.error || data.details || "Unknown error"}`);
+        console.error("Save failed - Status:", response.status, "Data:", data);
+        const errorMsg = data.details || data.error || `HTTP ${response.status}: ${response.statusText}`;
+        alert(`Failed to save configuration: ${errorMsg}`);
       }
     } catch (error: any) {
       console.error("Error saving config:", error);
+      console.error("Error stack:", error.stack);
       alert(`Failed to save configuration: ${error.message || "Network error"}`);
     } finally {
       setLoading(false);
@@ -149,10 +260,13 @@ export default function ProcessesPage() {
         : config.platformSettings;
     return settings[platform] || {
       dailyEnabled: false,
-      weeklyEnabled: false,
       dailyPostCount: 5,
-      timeRangeStart: "09:00",
-      timeRangeEnd: "16:00",
+      dailyTimeRangeStart: "09:00",
+      dailyTimeRangeEnd: "16:00",
+      weeklyEnabled: false,
+      weeklyPostCount: 10,
+      weeklyTimeRangeStart: "09:00",
+      weeklyTimeRangeEnd: "18:00",
     };
   };
 
@@ -162,7 +276,7 @@ export default function ProcessesPage() {
     min: number = 0,
     max: number = 100
   ) => {
-    const currentValue = Number(config[field]) || 0;
+    const currentValue = Number(config[field as keyof typeof config]) || 0;
     const newValue = Math.max(min, Math.min(max, currentValue + delta));
     setConfig({ ...config, [field]: newValue });
   };
@@ -232,7 +346,7 @@ export default function ProcessesPage() {
                 </button>
                 <input
                   type="number"
-                  value={config.volatilityThreshold.toFixed(2)}
+                  value={(config.volatilityThreshold ?? 2.0).toFixed(2)}
                   onChange={(e) =>
                     setConfig({
                       ...config,
@@ -495,50 +609,106 @@ function PlatformProcessSettings({
         </button>
       </div>
 
-      {/* Daily Post Count */}
+      {/* Daily Settings */}
       {settings.dailyEnabled && (
-        <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            Daily Post Count
-          </label>
-          <select
-            value={settings.dailyPostCount}
-            onChange={(e) =>
-              onUpdate({ dailyPostCount: parseInt(e.target.value) })
-            }
-            className="w-full px-4 py-2 bg-background border border-input rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-          >
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 24].map((num) => (
-              <option key={num} value={num}>
-                {num} {num === 1 ? "post" : "posts"} per day
-              </option>
-            ))}
-          </select>
-        </div>
+        <>
+          <div className="border-t border-border pt-4 mt-4">
+            <h4 className="text-sm font-semibold text-white mb-3">Daily Settings</h4>
+            
+            {/* Daily Post Count */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Daily Post Count
+              </label>
+              <select
+                value={settings.dailyPostCount}
+                onChange={(e) =>
+                  onUpdate({ dailyPostCount: parseInt(e.target.value) })
+                }
+                className="w-full px-4 py-2 bg-background border border-input rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+              >
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 24].map((num) => (
+                  <option key={num} value={num}>
+                    {num} {num === 1 ? "post" : "posts"} per day
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Daily Time Range */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Daily Time Range
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="time"
+                  value={settings.dailyTimeRangeStart}
+                  onChange={(e) => onUpdate({ dailyTimeRangeStart: e.target.value })}
+                  className="flex-1 px-4 py-2 bg-background border border-input rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+                <span className="text-gray-400">to</span>
+                <input
+                  type="time"
+                  value={settings.dailyTimeRangeEnd}
+                  onChange={(e) => onUpdate({ dailyTimeRangeEnd: e.target.value })}
+                  className="flex-1 px-4 py-2 bg-background border border-input rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
-      {/* Time Range */}
-      {settings.dailyEnabled && (
-        <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            Time Range
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              type="time"
-              value={settings.timeRangeStart}
-              onChange={(e) => onUpdate({ timeRangeStart: e.target.value })}
-              className="flex-1 px-4 py-2 bg-background border border-input rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-            />
-            <span className="text-gray-400">to</span>
-            <input
-              type="time"
-              value={settings.timeRangeEnd}
-              onChange={(e) => onUpdate({ timeRangeEnd: e.target.value })}
-              className="flex-1 px-4 py-2 bg-background border border-input rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-            />
+      {/* Weekly Settings */}
+      {settings.weeklyEnabled && (
+        <>
+          <div className="border-t border-border pt-4 mt-4">
+            <h4 className="text-sm font-semibold text-white mb-3">Weekly Settings</h4>
+            
+            {/* Weekly Post Count */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Weekly Post Count
+              </label>
+              <select
+                value={settings.weeklyPostCount}
+                onChange={(e) =>
+                  onUpdate({ weeklyPostCount: parseInt(e.target.value) })
+                }
+                className="w-full px-4 py-2 bg-background border border-input rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+              >
+                {[5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 84, 100].map((num) => (
+                  <option key={num} value={num}>
+                    {num} {num === 1 ? "post" : "posts"} per week
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Weekly Time Range */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Weekly Time Range
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="time"
+                  value={settings.weeklyTimeRangeStart}
+                  onChange={(e) => onUpdate({ weeklyTimeRangeStart: e.target.value })}
+                  className="flex-1 px-4 py-2 bg-background border border-input rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+                <span className="text-gray-400">to</span>
+                <input
+                  type="time"
+                  value={settings.weeklyTimeRangeEnd}
+                  onChange={(e) => onUpdate({ weeklyTimeRangeEnd: e.target.value })}
+                  className="flex-1 px-4 py-2 bg-background border border-input rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+              </div>
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
