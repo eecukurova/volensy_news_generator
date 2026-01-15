@@ -1,0 +1,88 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Api {
+  id          String   @id @default(cuid())
+  name        String
+  apiKey      String?
+  endpointUrl String
+  httpMethod  String   @default("GET")
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("apis")
+}
+
+model SocialMediaConfig {
+  id                    String   @id @default(cuid())
+  platform              String   // 'twitter', 'telegram', 'instagram'
+  enabled               Boolean  @default(false)
+  
+  // Twitter/X fields
+  twitterApiKey         String?
+  twitterApiSecret      String?
+  twitterAccessToken    String?
+  twitterAccessTokenSecret String?
+  twitterBearerToken    String?
+  
+  // Telegram fields
+  telegramBotToken      String?
+  telegramChannelId     String?
+  telegramChannelUsername String?
+  
+  // Instagram fields (for future use)
+  instagramAccessToken  String?
+  instagramAppId        String?
+  instagramAppSecret    String?
+  
+  // Test results
+  lastTestResult        String?
+  lastTestTimestamp     DateTime?
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([platform])
+  @@map("social_media_configs")
+}
+
+model Template {
+  id          String   @id @default(cuid())
+  platform    String   // 'telegram', 'twitter'
+  content     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([platform])
+  @@map("templates")
+}
+
+model ProcessConfig {
+  id                          String   @id @default(cuid())
+  
+  // News Criteria Configuration
+  highPriorityKeywords        String   @default("bitcoin\nethereum\nfed\ninterest rates\nsec\netf")
+  volatilityThreshold         Float    @default(2.0)
+  language                    String   @default("en")
+  newsTimeWindow              Int      @default(2) // hours
+  duplicateThreshold          Float    @default(80.0) // percentage
+  cacheDuration               Int      @default(300) // seconds
+  
+  // Platform Process Settings (JSON string to store platform-specific configs)
+  platformSettings            String   @default("{}") // JSON: { "telegram": {...}, "twitter": {...} }
+  
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  @@map("process_configs")
+}
